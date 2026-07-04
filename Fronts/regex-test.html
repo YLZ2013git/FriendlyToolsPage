@@ -374,20 +374,21 @@
         <p>© 2026 Friendly Tools · 用 ❤️ 和 🍅 打造</p>
     </footer>
 
+    <script src="js/api.js"></script>
     <script>
         let flags = { g: true, i: true, m: false, s: false };
+        let debounceTimer = null;
+        let requestId = 0;
 
-        // 修饰符按钮切换
         document.querySelectorAll('.flag-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const flag = btn.dataset.flag;
                 flags[flag] = !flags[flag];
                 btn.classList.toggle('active', flags[flag]);
-                runTest();
+                debounceRunTest();
             });
         });
 
-        // 获取当前修饰符字符串
         function getFlagsString() {
             return Object.entries(flags)
                 .filter(([_, v]) => v)
@@ -395,15 +396,22 @@
                 .join('');
         }
 
-        // 转义 HTML
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
 
-        // 运行正则测试
-        function runTest() {
+        function debounceRunTest() {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+            }
+            debounceTimer = setTimeout(() => {
+                runTest();
+            }, 300);
+        }
+
+        async function runTest() {
             const regexInput = document.getElementById('regexInput');
             const testText = document.getElementById('testText');
             const highlightedText = document.getElementById('highlightedText');
@@ -418,7 +426,6 @@
             const pattern = regexInput.value;
             const text = testText.value;
 
-            // 重置状态
             errorBox.style.display = 'none';
             groupsSection.style.display = 'none';
             regexInput.classList.remove('error', 'valid');
@@ -438,85 +445,68 @@
             }
 
             try {
-                const startTime = performance.now();
-                const regex = new RegExp(pattern, getFlagsString());
-                const endTime = performance.now();
+                const result = await apiRequest('/api/text/regex-test', {
+                    method: 'POST',
+                    data: { pattern, text },
+                    options: { flags: getFlagsString() }
+                });
 
-                regexInput.classList.add('valid');
-                validStatus.textContent = '✓';
-                validStatus.style.color = '#10b981';
+                if (result.success) {
+                    const { matches, stats } = result.data;
 
-                let matches = [];
-                let match;
-                let html = '';
-                let lastIndex = 0;
+                    regexInput.classList.add('valid');
+                    validStatus.textContent = '✓';
+                    validStatus.style.color = '#10b981';
 
-                if (flags.g) {
-                    // 全局模式
-                    while ((match = regex.exec(text)) !== null) {
-                        matches.push(match);
-                        // 防止无限循环
-                        if (match.index === regex.lastIndex) {
-                            regex.lastIndex++;
+                    matchTime.textContent = stats.time;
+                    matchCount.textContent = stats.matchCount;
+                    groupCount.textContent = stats.groupCount;
+
+                    let html = '';
+                    if (matches.length > 0) {
+                        html = escapeHtml(text.substring(0, matches[0].index));
+
+                        matches.forEach((m, idx) => {
+                            const matchClass = idx % 4 === 0 ? 'match' :
+                                              idx % 4 === 1 ? 'match-group' :
+                                              idx % 4 === 2 ? 'match-group-2' : 'match-group-3';
+                            html += `<span class="${matchClass}">${escapeHtml(m.value)}</span>`;
+
+                            if (m.index + m.length < text.length) {
+                                html += escapeHtml(text.substring(m.index + m.length,
+                                    matches[idx + 1] ? matches[idx + 1].index : text.length));
+                            }
+                        });
+
+                        const lastMatch = matches[matches.length - 1];
+                        if (lastMatch.index + lastMatch.length < text.length) {
+                            html += escapeHtml(text.substring(lastMatch.index + lastMatch.length));
                         }
+                    } else {
+                        html = escapeHtml(text);
+                    }
+
+                    highlightedText.innerHTML = html;
+
+                    if (matches.length > 0 && matches[0].groups.length > 0) {
+                        groupsSection.style.display = 'block';
+                        groupList.innerHTML = '';
+
+                        matches[0].groups.forEach((g, i) => {
+                            const item = document.createElement('div');
+                            item.className = 'group-item';
+                            item.innerHTML = `
+                                <span class="group-label">组${g.index}:</span>
+                                <span class="group-value">${escapeHtml(g.value || '(空)')}</span>
+                            `;
+                            groupList.appendChild(item);
+                        });
+                    } else {
+                        groupCount.textContent = '0';
                     }
                 } else {
-                    // 非全局模式
-                    match = regex.exec(text);
-                    if (match) matches.push(match);
+                    throw new Error(result.error || '请求失败');
                 }
-
-                matchTime.textContent = Math.round(endTime - startTime);
-                matchCount.textContent = matches.length;
-
-                // 高亮显示
-                if (matches.length > 0) {
-                    html = escapeHtml(text.substring(0, matches[0].index));
-
-                    matches.forEach((m, idx) => {
-                        const matchClass = idx % 4 === 0 ? 'match' :
-                                          idx % 4 === 1 ? 'match-group' :
-                                          idx % 4 === 2 ? 'match-group-2' : 'match-group-3';
-                        html += `<span class="${matchClass}">${escapeHtml(m[0])}</span>`;
-
-                        if (m.index + m[0].length < text.length) {
-                            html += escapeHtml(text.substring(m.index + m[0].length,
-                                matches[idx + 1] ? matches[idx + 1].index : text.length));
-                        }
-                    });
-
-                    // 如果还有剩余文本
-                    const lastMatch = matches[matches.length - 1];
-                    if (lastMatch.index + lastMatch[0].length < text.length) {
-                        html += escapeHtml(text.substring(lastMatch.index + lastMatch[0].length));
-                    }
-                } else {
-                    html = escapeHtml(text);
-                }
-
-                highlightedText.innerHTML = html;
-
-                // 显示分组信息
-                if (matches.length > 0 && matches[0].length > 1) {
-                    groupsSection.style.display = 'block';
-                    groupCount.textContent = matches[0].length - 1;
-                    groupList.innerHTML = '';
-
-                    for (let i = 1; i < matches[0].length; i++) {
-                        const item = document.createElement('div');
-                        item.className = 'group-item';
-                        item.innerHTML = `
-                            <span class="group-label">${
-                                matches[0].groups ? Object.keys(matches[0].groups)[i-1] || `组${i}` : `组${i}`
-                            }:</span>
-                            <span class="group-value">${escapeHtml(matches[0][i] || '(空)')}</span>
-                        `;
-                        groupList.appendChild(item);
-                    }
-                } else {
-                    groupCount.textContent = '0';
-                }
-
             } catch (error) {
                 regexInput.classList.add('error');
                 regexInput.classList.remove('valid');
@@ -527,15 +517,13 @@
                 matchTime.textContent = '0';
                 highlightedText.innerHTML = escapeHtml(text);
                 errorBox.style.display = 'block';
-                errorBox.innerHTML = `<strong>❌ 正则表达式错误：</strong>${escapeHtml(error.message)}`;
+                errorBox.innerHTML = `<strong>❌ 错误：</strong>${escapeHtml(error.message)}`;
             }
         }
 
-        // 监听输入变化
-        document.getElementById('regexInput').addEventListener('input', runTest);
-        document.getElementById('testText').addEventListener('input', runTest);
+        document.getElementById('regexInput').addEventListener('input', debounceRunTest);
+        document.getElementById('testText').addEventListener('input', debounceRunTest);
 
-        // 初始运行
         runTest();
     </script>
 </body>

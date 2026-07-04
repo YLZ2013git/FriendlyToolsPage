@@ -5,6 +5,87 @@ const Diff = require('diff');
 module.exports = function(app, dependencies) {
     const { errorMap, dbPath } = dependencies;
 
+    app.post('/api/text/regex-test', (req, res) => {
+        const { data, options } = req.body;
+        const pattern = data && data.pattern !== undefined ? data.pattern : req.body.pattern;
+        const text = data && data.text !== undefined ? data.text : req.body.text;
+        const flags = (options && options.flags !== undefined) ? options.flags : (req.body.flags || 'gi');
+
+        if (!pattern || typeof pattern !== 'string' || pattern.trim() === '') {
+            return errorResponse(res, '缺少必要参数: pattern（正则表达式不能为空）', 10001);
+        }
+
+        if (!text || typeof text !== 'string') {
+            return errorResponse(res, '缺少必要参数: text（测试文本不能为空）', 10001);
+        }
+
+        try {
+            const regex = new RegExp(pattern, flags);
+            const matches = [];
+            let match;
+            const startTime = Date.now();
+
+            if (flags.includes('g')) {
+                while ((match = regex.exec(text)) !== null) {
+                    const groups = [];
+                    for (let i = 1; i < match.length; i++) {
+                        groups.push({
+                            index: i,
+                            value: match[i] || ''
+                        });
+                    }
+                    matches.push({
+                        value: match[0],
+                        index: match.index,
+                        length: match[0].length,
+                        groups: groups
+                    });
+                    if (match.index === regex.lastIndex) {
+                        regex.lastIndex++;
+                    }
+                }
+            } else {
+                match = regex.exec(text);
+                if (match) {
+                    const groups = [];
+                    for (let i = 1; i < match.length; i++) {
+                        groups.push({
+                            index: i,
+                            value: match[i] || ''
+                        });
+                    }
+                    matches.push({
+                        value: match[0],
+                        index: match.index,
+                        length: match[0].length,
+                        groups: groups
+                    });
+                }
+            }
+
+            const endTime = Date.now();
+            const groupCount = matches.length > 0 ? matches[0].groups.length : 0;
+
+            successResponse(res, {
+                matches: matches,
+                matchCount: matches.length,
+                groupCount: groupCount,
+                valid: true,
+                flags: flags,
+                pattern: pattern,
+                stats: {
+                    matchCount: matches.length,
+                    groupCount: groupCount,
+                    time: endTime - startTime,
+                    textLength: text.length
+                }
+            });
+        } catch (error) {
+            console.error('❌ 正则表达式测试失败:', error);
+            errorResponse(res, '正则表达式错误: ' + error.message, 10010, 400);
+        }
+    });
+
     app.post('/api/text/diff', (req, res) => {
         const { data, options } = req.body;
         const originalText = data && data.originalText !== undefined ? data.originalText : req.body.originalText;
